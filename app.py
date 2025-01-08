@@ -4,6 +4,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import urllib.request, urllib.error
 import transmission_rpc
+from pymongo import MongoClient
+import argparse
 
 def askURL(url):
     head = { 
@@ -55,10 +57,34 @@ def send_link_to_transmission(download_link):
     except transmission_rpc.error.TransmissionError as e:
         print(f"Failed to add torrent: {e}")
 
+def save_to_mongodb(link):
+    # Connect to MongoDB
+    client = MongoClient('mongodb://192.168.1.50:27017/')
+
+    # Select the database
+    db = client['torrentdownloader']
+
+    # Select the collection
+    collection = db['torrentdownloader']
+
+    if collection.find_one({"download_link": link}) is None:
+        # Insert the download link into the collection
+        collection.insert_one({"download_link": link})
+        return True
+    else:
+        return False
+
 if __name__ == "__main__":
-    url = 'https://onejav.com/popular/?page='
+    parser = argparse.ArgumentParser(description='Torrent Downloader')
+    parser.add_argument('-url', type=str, help='The base URL to fetch torrent links from')
+    args = parser.parse_args()
+
+    url = args.url
     for i in range(1, 5):
         download_links = fetch_download_links(url + str(i))
         for link in download_links:
-            send_link_to_transmission(link)
-            
+            if (save_to_mongodb(link)):
+                send_link_to_transmission(link)
+                print(f"Link sent to transmission: {link}")
+            else:
+                print(f"Link already exists: {link}")

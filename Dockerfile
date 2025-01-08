@@ -17,4 +17,4 @@ COPY . /app
 
 RUN chmod +x /app/app.py
 # During debugging, this entry point will be overridden. For more information, please refer to https://aka.ms/vscode-docker-python-debug
-CMD ["python", "app.py"]
+ENTRYPOINT ["python", "app.py"]
