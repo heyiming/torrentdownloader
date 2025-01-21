@@ -4,8 +4,10 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import urllib.request, urllib.error
 import transmission_rpc
-from pymongo import MongoClient
+from pymongo import ASCENDING, MongoClient
 import argparse
+
+LABEL = "TORRENTDOWNLOADER"
 
 def askURL(url):
     head = { 
@@ -44,28 +46,36 @@ def fetch_download_links(url):
 
     return download_links
 
-def send_link_to_transmission(download_link):
-    # Connect to the Transmission server
-    client = transmission_rpc.Client(
-        host = "192.168.1.50"
-    )
+def clean_up_download(client): 
+    torrents = client.get_torrents()
+    
+    done_torrents = []
+    for torrent in torrents:
+        if torrent.status.stopped and LABEL in torrent.labels:
+            print(f"Torrent id:{torrent.id} name:{torrent.name} is done. To remove.")
+            done_torrents.append(torrent.id)
+    
+    if done_torrents:
+        client.remove_torrent(ids = done_torrents)
+    
 
+def send_link_to_transmission(client, download_link):
     # Add the torrent or magnet link
     try:
-        torrent = client.add_torrent(download_link, download_dir="/private")
+        torrent = client.add_torrent(download_link, download_dir="/private", labels=[LABEL])
         print(f"Successfully added torrent: {torrent.name}")
     except transmission_rpc.error.TransmissionError as e:
         print(f"Failed to add torrent: {e}")
 
-def save_to_mongodb(link):
-    # Connect to MongoDB
-    client = MongoClient('mongodb://192.168.1.50:27017/')
-
+def save_to_mongodb(mongo_client, link):
     # Select the database
-    db = client['torrentdownloader']
+    db = mongo_client['torrentdownloader']
 
     # Select the collection
     collection = db['torrentdownloader']
+    
+    # Create a TTL index on the createdAt field with a 30-day expiration
+    collection.create_index([("createdAt", ASCENDING)], expireAfterSeconds=2592000)
 
     if collection.find_one({"download_link": link}) is None:
         # Insert the download link into the collection
@@ -79,12 +89,20 @@ if __name__ == "__main__":
     parser.add_argument('-url', type=str, help='The base URL to fetch torrent links from')
     args = parser.parse_args()
 
+    # Connect to the Transmission server
+    tranmission_client = transmission_rpc.Client(
+        host = "192.168.1.50"
+    )
+    mongo_client = MongoClient('mongodb://192.168.1.50:27017/')
+
+    clean_up_download(tranmission_client)
+    
     url = args.url
     for i in range(1, 5):
         download_links = fetch_download_links(url + str(i))
         for link in download_links:
-            if (save_to_mongodb(link)):
-                send_link_to_transmission(link)
+            if (save_to_mongodb(mongo_client, link)):
+                send_link_to_transmission(tranmission_client, link)
                 print(f"Link sent to transmission: {link}")
             else:
                 print(f"Link already exists: {link}")
